@@ -1,0 +1,51 @@
+version: '3'
+
+tasks:
+  backend-tidy:
+    dir: backend
+    cmds:
+      - go mod tidy
+
+  backend-build:
+    dir: backend
+    cmds:
+      - go build -buildvcs=false ./...
+
+  backend-run:
+    dir: backend
+    cmds:
+      - go run ./cmd/server
+
+  backend-test:
+    dir: backend
+    cmds:
+      - go test -buildvcs=false ./...
+
+  frontend-install:
+    dir: frontend
+    cmds:
+      - npm install
+
+  frontend-build:
+    dir: frontend
+    cmds:
+      - npm run build
+
+  frontend-dev:
+    dir: frontend
+    cmds:
+      - npm run dev
+
+  docker-up:
+    cmds:
+      - docker compose up -d
+
+  docker-down:
+    cmds:
+      - docker compose down
+
+  validate:
+    cmds:
+      - task: backend-build
+      - task: frontend-build
+    desc: Build backend and frontend to verify everything compiles
