@@ -429,7 +429,7 @@ func (a *Alerter) checkDockerStatus() {
 		name := parts[0]
 		status := parts[1]
 
-		if strings.Contains(status, "Exited") {
+		if strings.Contains(status, "Exited") || strings.Contains(status, "Dead") {
 			a.addAlert(&Alert{
 				Source:    "docker",
 				Severity:  "critical",
@@ -438,6 +438,17 @@ func (a *Alerter) checkDockerStatus() {
 				Metric:    "container_status",
 				Value:     0,
 				Threshold: 1,
+			})
+		}
+		if strings.Contains(status, "Paused") {
+			a.addAlert(&Alert{
+				Source:    "docker",
+				Severity:  "warning",
+				Message:   fmt.Sprintf("容器 %s 处于暂停状态，可能影响服务可用性", name),
+				Container: name,
+				Metric:    "container_paused",
+				Value:     1,
+				Threshold: 0,
 			})
 		}
 	}

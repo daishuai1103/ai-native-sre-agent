@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useCallback, useEffect, useState } from 'react'
 import './App.css'
 import AlertList from './components/AlertList'
 import ChatPanel from './components/ChatPanel'
@@ -6,7 +6,7 @@ import StatusBar from './components/StatusBar'
 import ReportView from './components/ReportView'
 import RouterInline from './components/RouterInline'
 import TracePanel from './components/TracePanel'
-import { useSSE } from './api/sse'
+import { useSSE, stepsToEvents } from './api/sse'
 
 export interface StepEvent {
   type: string
@@ -23,16 +23,22 @@ export default function App() {
   const [routeSource, setRouteSource] = useState('')
   const [routeConfidence, setRouteConfidence] = useState(0)
   const [currentAlert, setCurrentAlert] = useState('')
+  const [events, setEvents] = useState<StepEvent[]>([])
 
-  const { events } = useSSE(sessionId)
-
-  // Watch for report_generated events
-  useEffect(() => {
-    const last = events[events.length - 1]
-    if (last?.type === 'report_generated') {
-      setReport(last.step || '')
+  const handleSSEEvent = useCallback((ev: StepEvent) => {
+    setEvents((prev) => [...prev, ev])
+    // Also catch report from live SSE
+    if (ev.type === 'report_generated') {
+      setReport(ev.step || '')
     }
-  }, [events])
+  }, [])
+
+  const handleSSEClear = useCallback(() => {
+    setEvents([])
+    setReport('')
+  }, [])
+
+  useSSE({ sessionId, onEvent: handleSSEEvent, onClear: handleSSEClear })
 
   // Fetch session details on session change
   useEffect(() => {
@@ -50,13 +56,22 @@ export default function App() {
         setRouteConfidence(data.task.route_confidence || data.task.RouteConfidence || 0)
         setCurrentAlert(data.task.alert || data.task.Alert || '')
       }
-      if (data.steps) {
-        // Steps are already streamed via SSE; but if none yet, hydrate from history
-        if (events.length === 0) {
-          // leave SSE to populate
+      // Load historical steps if session is already done (or partially done)
+      if (data.steps && data.steps.length > 0) {
+        const historical = stepsToEvents(data.steps)
+        // Add report banner if report exists
+        if (data.report) {
+          historical.push({
+            type: 'report_generated',
+            agent: 'reporter',
+            step: data.report,
+            payload: {},
+            timestamp: new Date().toISOString(),
+          })
+          setReport(data.report)
         }
-      }
-      if (data.report) {
+        setEvents(historical)
+      } else if (data.report) {
         setReport(data.report)
       }
     } catch (e) {
@@ -67,6 +82,7 @@ export default function App() {
   const handleSelectSession = (sid: string) => {
     setSessionId(sid)
     setReport('')
+    setEvents([])
   }
 
   const handleSessionCreated = (sid: string) => {
