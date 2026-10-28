@@ -25,6 +25,10 @@ const (
 	StatusFailed     AlertStatus = "failed"
 )
 
+// maxAlerts caps the in-memory alert history so a long-running process does not
+// grow without bound.
+const maxAlerts = 500
+
 // Alert represents a detected anomaly.
 type Alert struct {
 	ID           string      `json:"id"`
@@ -235,10 +239,26 @@ func (a *Alerter) List() []*Alert {
 }
 
 func (a *Alerter) checkAll() {
-	a.checkDockerMemory()
-	a.checkDockerCPU()
-	a.checkDockerStatus()
-	a.checkPrometheusRedis()
+	// seen collects the dedup keys observed in this cycle. Keys that are no
+	// longer observed are released so the alert can fire again after recovery.
+	seen := make(map[string]bool)
+	a.checkDockerMemory(seen)
+	a.checkDockerCPU(seen)
+	a.checkDockerStatus(seen)
+	a.checkPrometheusRedis(seen)
+	a.releaseStale(seen)
+}
+
+// releaseStale drops dedup keys that were not produced by the latest check
+// cycle, so a recovered-then-degraded container raises a fresh alert.
+func (a *Alerter) releaseStale(seen map[string]bool) {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	for key := range a.activeAlerts {
+		if !seen[key] {
+			delete(a.activeAlerts, key)
+		}
+	}
 }
 
 // InjectDemoAlerts injects a batch of simulated alerts for demo purposes.
@@ -293,16 +313,20 @@ func (a *Alerter) InjectDemoAlerts() int {
 
 	count := 0
 	for _, alert := range demoAlerts {
-		a.addAlert(alert)
+		a.addAlert(alert, nil)
 		count++
 	}
 	log.Printf("[Alerter] injected %d demo alerts", count)
 	return count
 }
 
-func (a *Alerter) addAlert(alert *Alert) {
-	a.mu.Lock()
+func (a *Alerter) addAlert(alert *Alert, seen map[string]bool) {
 	key := alert.Container + ":" + alert.Metric
+	if seen != nil {
+		seen[key] = true
+	}
+
+	a.mu.Lock()
 	if a.activeAlerts[key] {
 		a.mu.Unlock()
 		return
@@ -311,6 +335,11 @@ func (a *Alerter) addAlert(alert *Alert) {
 	alert.ID = fmt.Sprintf("alert-%d", time.Now().UnixNano())
 	alert.DetectedAt = time.Now()
 	a.alerts = append([]*Alert{alert}, a.alerts...)
+	if len(a.alerts) > maxAlerts {
+		trimmed := make([]*Alert, maxAlerts)
+		copy(trimmed, a.alerts[:maxAlerts])
+		a.alerts = trimmed
+	}
 	a.mu.Unlock()
 
 	log.Printf("[ALERT] %s: %s (%.2f > %.2f) [%s]",
@@ -344,7 +373,7 @@ func (a *Alerter) addAlert(alert *Alert) {
 
 // --- Docker checks ---
 
-func (a *Alerter) checkDockerMemory() {
+func (a *Alerter) checkDockerMemory(seen map[string]bool) {
 	out, err := exec.Command("docker", "stats", "--no-stream",
 		"--format", "{{.Name}}|{{.MemUsage}}|{{.MemPerc}}").Output()
 	if err != nil {
@@ -376,12 +405,12 @@ func (a *Alerter) checkDockerMemory() {
 				Metric:    "memory_percent",
 				Value:     memPerc,
 				Threshold: 80,
-			})
+			}, seen)
 		}
 	}
 }
 
-func (a *Alerter) checkDockerCPU() {
+func (a *Alerter) checkDockerCPU(seen map[string]bool) {
 	out, err := exec.Command("docker", "stats", "--no-stream",
 		"--format", "{{.Name}}|{{.CPUPerc}}").Output()
 	if err != nil {
@@ -409,12 +438,12 @@ func (a *Alerter) checkDockerCPU() {
 				Metric:    "cpu_percent",
 				Value:     cpuPerc,
 				Threshold: 90,
-			})
+			}, seen)
 		}
 	}
 }
 
-func (a *Alerter) checkDockerStatus() {
+func (a *Alerter) checkDockerStatus(seen map[string]bool) {
 	out, err := exec.Command("docker", "ps", "-a", "--format",
 		"{{.Names}}|{{.Status}}").Output()
 	if err != nil {
@@ -438,7 +467,7 @@ func (a *Alerter) checkDockerStatus() {
 				Metric:    "container_status",
 				Value:     0,
 				Threshold: 1,
-			})
+			}, seen)
 		}
 		if strings.Contains(status, "Paused") {
 			a.addAlert(&Alert{
@@ -449,7 +478,7 @@ func (a *Alerter) checkDockerStatus() {
 				Metric:    "container_paused",
 				Value:     1,
 				Threshold: 0,
-			})
+			}, seen)
 		}
 	}
 }
@@ -466,7 +495,7 @@ type promQueryResult struct {
 	} `json:"data"`
 }
 
-func (a *Alerter) checkPrometheusRedis() {
+func (a *Alerter) checkPrometheusRedis(seen map[string]bool) {
 	query := "redis_memory_used_bytes / redis_memory_max_bytes * 100"
 	result, err := queryPrometheus(a.promURL, query)
 	if err != nil {
@@ -499,7 +528,7 @@ func (a *Alerter) checkPrometheusRedis() {
 				Metric:    "redis_memory_percent",
 				Value:     val,
 				Threshold: 80,
-			})
+			}, seen)
 		}
 	}
 }

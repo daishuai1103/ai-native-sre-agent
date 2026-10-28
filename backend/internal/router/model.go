@@ -3,6 +3,7 @@ package router
 import (
 	"encoding/json"
 	"fmt"
+	"math"
 	"os"
 	"strings"
 )
@@ -71,34 +72,14 @@ func softmax(scores []float32) []float32 {
 	expVals := make([]float32, len(scores))
 	sum := float32(0)
 	for i, v := range scores {
-		e := float32(1) // placeholder, we compute below
-		// Use simple exp approximation via math
-		_ = e
-		expVals[i] = fastExp(v - maxVal)
+		expVals[i] = float32(math.Exp(float64(v - maxVal)))
 		sum += expVals[i]
 	}
 	// Normalize
-	for i := range expVals {
-		expVals[i] /= sum
+	if sum > 0 {
+		for i := range expVals {
+			expVals[i] /= sum
+		}
 	}
 	return expVals
-}
-
-// fastExp is a simple exp approximation (good enough for softmax of 5 values).
-func fastExp(x float32) float32 {
-	// Use taylor series for small x, clamp for large x
-	if x > 10 {
-		return 22026
-	}
-	if x < -10 {
-		return 0.00005
-	}
-	// e^x ≈ (1 + x/256)^256, but let's just use a simple taylor
-	result := float32(1)
-	term := float32(1)
-	for i := 1; i <= 20; i++ {
-		term *= x / float32(i)
-		result += term
-	}
-	return result
 }

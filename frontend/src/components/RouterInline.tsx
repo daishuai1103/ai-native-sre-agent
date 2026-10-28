@@ -16,7 +16,7 @@ interface RouterStatus {
 
 const categoryLabels: Record<string, string> = {
   container: '容器资源',
-  database: '数据库',
+  db: '数据库',
   cache: '缓存服务',
   network: '网络',
   web: 'Web 服务',

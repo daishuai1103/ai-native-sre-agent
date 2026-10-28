@@ -207,7 +207,7 @@ go run ./cmd/server
 | 分类 | 示例 |
 |---|---|
 | 容器资源 (container) | 容器内存过高、CPU 飙升 |
-| 数据库 (database) | PostgreSQL 慢查询、连接数过高 |
+| 数据库 (db) | PostgreSQL 慢查询、连接数过高 |
 | 缓存服务 (cache) | Redis 内存过高、连接数满 |
 | 网络 (network) | Nginx 5xx 上升、响应超时 |
 | Web 服务 (web) | NetBox 500 错误、页面加载慢 |

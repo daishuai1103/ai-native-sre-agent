@@ -17,6 +17,11 @@ type Message struct {
 	Role    string  `json:"role"`
 	Content string  `json:"content"`
 	Name    *string `json:"name,omitempty"`
+	// ToolCalls must be echoed back on the assistant message that requested them,
+	// otherwise the "tool" messages that follow are rejected by OpenAI-compatible APIs.
+	ToolCalls []ToolCall `json:"tool_calls,omitempty"`
+	// ToolCallID links a "tool" message to the assistant tool call it answers.
+	ToolCallID string `json:"tool_call_id,omitempty"`
 }
 
 // ToolDefinition describes a tool to the LLM.

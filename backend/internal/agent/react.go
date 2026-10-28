@@ -71,9 +71,29 @@ func ReAct(
 		}
 
 		state.AddStep(Step{Agent: string(agentType), Type: "thought", Content: resp.Content})
-		messages = append(messages, llm.Message{Role: "assistant", Content: resp.Content})
 
-		for _, tc := range resp.ToolCalls {
+		// Normalize tool calls: some OpenAI-compatible backends omit the id or
+		// type field. Both are required when echoing the call back.
+		toolCalls := make([]llm.ToolCall, len(resp.ToolCalls))
+		copy(toolCalls, resp.ToolCalls)
+		for j := range toolCalls {
+			if toolCalls[j].ID == "" {
+				toolCalls[j].ID = fmt.Sprintf("call_%d_%d", i, j)
+			}
+			if toolCalls[j].Type == "" {
+				toolCalls[j].Type = "function"
+			}
+		}
+
+		// The assistant message that requested the tools MUST echo tool_calls,
+		// otherwise the following "tool" messages are rejected by the API.
+		messages = append(messages, llm.Message{
+			Role:      "assistant",
+			Content:   resp.Content,
+			ToolCalls: toolCalls,
+		})
+
+		for _, tc := range toolCalls {
 			t, err := registry.Get(tc.Function.Name)
 			if err != nil {
 				state.AddStep(Step{
@@ -114,9 +134,9 @@ func ReAct(
 			})
 
 			messages = append(messages, llm.Message{
-				Role:    "tool",
-				Content: result,
-				Name:    &tc.Function.Name,
+				Role:       "tool",
+				Content:    result,
+				ToolCallID: tc.ID,
 			})
 		}
 	}
@@ -131,7 +151,7 @@ func fallbackContent(agentType AgentType, state *ContextState) string {
 	// Category-specific description for fallback
 	catDesc := map[string]string{
 		"container": "容器资源异常（CPU/内存/磁盘）",
-		"database":  "数据库性能或连接问题",
+		"db":        "数据库性能或连接问题",
 		"cache":     "缓存服务（Redis）异常",
 		"network":   "网络连通性或负载均衡问题",
 		"web":       "Web 服务响应异常",

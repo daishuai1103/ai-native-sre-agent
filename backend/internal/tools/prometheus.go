@@ -7,7 +7,9 @@ import (
 	"net/http"
 	"net/url"
 	"os"
+	"strconv"
 	"strings"
+	"time"
 
 	"github.com/invopop/jsonschema"
 	"github.com/wk8/go-ordered-map/v2"
@@ -45,12 +47,33 @@ func (PrometheusQueryTool) Call(ctx context.Context, args map[string]any) (strin
 		baseURL = "http://localhost:9090"
 	}
 
-	endpoint, err := url.Parse(strings.TrimRight(baseURL, "/") + "/api/v1/query")
+	// A valid lookback window switches to /api/v1/query_range so the caller gets
+	// a time series instead of a single instant sample.
+	lookback, lookbackErr := time.ParseDuration(timeRange)
+	useRange := lookbackErr == nil && lookback > 0
+
+	endpointPath := "/api/v1/query"
+	if useRange {
+		endpointPath = "/api/v1/query_range"
+	}
+
+	endpoint, err := url.Parse(strings.TrimRight(baseURL, "/") + endpointPath)
 	if err != nil {
 		return fmt.Sprintf("prometheus query failed: invalid PROMETHEUS_URL: %v", err), nil
 	}
 	values := endpoint.Query()
 	values.Set("query", query)
+	if useRange {
+		now := time.Now()
+		start := now.Add(-lookback)
+		step := lookback / 60
+		if step < time.Second {
+			step = time.Second
+		}
+		values.Set("start", strconv.FormatInt(start.Unix(), 10))
+		values.Set("end", strconv.FormatInt(now.Unix(), 10))
+		values.Set("step", strconv.FormatFloat(step.Seconds(), 'f', -1, 64))
+	}
 	endpoint.RawQuery = values.Encode()
 
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, endpoint.String(), nil)
@@ -114,6 +137,12 @@ func (PrometheusQueryTool) Call(ctx context.Context, args map[string]any) (strin
 		}
 		if len(r.Values) > 0 {
 			fmt.Fprintf(&b, " samples=%d", len(r.Values))
+			if first := r.Values[0]; len(first) >= 2 {
+				fmt.Fprintf(&b, " first=%v@%v", first[1], first[0])
+			}
+			if last := r.Values[len(r.Values)-1]; len(last) >= 2 {
+				fmt.Fprintf(&b, " last=%v@%v", last[1], last[0])
+			}
 		}
 	}
 	return b.String(), nil
